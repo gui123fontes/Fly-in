@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ZoneType(Enum):
     """The type of a zone, which determines movement cost and accessibility"""
 
@@ -9,14 +10,14 @@ class ZoneType(Enum):
     PRIORITY = "priority"
 
     @classmethod
-    def	from_str(cls, value: str) -> "ZoneType":
+    def from_str(cls, value: str) -> "ZoneType":
         """Convert a raw string into a ZoneType.
         Args:
             value: The raw string read from the map file (e.g. "restricted").
-        
+
         Returns:
             The matching ZoneType member.
-            
+
         Raises:
             ValueError: If value does not match any known zone type.
         """
@@ -24,6 +25,7 @@ class ZoneType(Enum):
             if member.value == value:
                 return member
         raise ValueError(f"invalid zone type '{value}'")
+
 
 class Zone:
 
