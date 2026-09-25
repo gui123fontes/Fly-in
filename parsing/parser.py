@@ -52,6 +52,67 @@ class MapParser:
             raise ParseError(line_number, f"invalid nb_drones value '{rest}'")
         self.nb_drones = nb
 
+    def _parse_connection(self, rest: str, line_number: int) -> None:
+        parts = rest.split("[", 1)
+        if len(parts) == 1:
+            connection_part = parts[0].strip()
+            metadata_part = None
+        else:
+            connection_part = parts[0].strip()
+            metadata_raw = parts[1].strip()
+            if not metadata_raw.endswith("]"):
+                raise ParseError(line_number, "metadata block not closed with ']'")
+            metadata_part = metadata_raw[:-1]
+        connection_zones = connection_part.split("-")
+        if len(connection_zones) != 2:
+            raise ParseError(line_number,
+                             "connection zones must be exactly two")
+        zone_a = connection_zones[0].strip()
+        zone_b = connection_zones[1].strip()
+        if zone_a not in self.zones:
+            raise ParseError(line_number,
+                             f"connection reference unknown zone '{zone_a}")
+        if zone_b not in self.zones:
+            raise ParseError(line_number,
+                             f"connection references unknown zone '{zone_b}")
+        key = tuple(sorted([zone_a, zone_b]))
+        if key in self.seen_connections:
+            raise ParseError(line_number,
+                             f"duplicate connection {zone_a}-{zone_b}")
+        self.seen_connections.add(key)
+        connection = Connection(zone_a, zone_b, max_link_capacity)
+        self.connections.append(self.connection)
+
+    def _parse_metadata(
+            self, metadata_part: str, line_number: int) -> dict[str, str]:
+        """Parse a netadata block into a dictionary of key-value pairs.
+        Splits the content of a '[...]' block (without the brackets) on
+        whitespace to get individual 'key=value' tokens, theb splits each
+        token on '=' to build the resulting dictionary.
+        Args:
+            metadata_part: The raw text between the square brackets,
+                e.g. "zone=normal color=blue.
+            line_number: The line number, used for error reporting
+
+        Returns:
+            A dictionary mapping each metadata key to its raw string value.
+            Values are not yet converted or validated against expected types;
+            callers are responsible for interpreting them.
+
+        Raises:
+            ParseError: If any token is not in the form 'key=value'.
+        """
+        metadata: dict[str, str] = {}
+        tokens = metadata_part.split()
+        for token in tokens:
+            pair = token.split("=")
+            if len(pair) != 2:
+                raise ParseError(line_number, "invalid metadata")
+            key = pair[0].strip()
+            value = pair[1].strip()
+            metadata[key] = value
+        return metadata
+
     def _parse_line(self, line: str, line_number: int) -> None:
         """Determine the type of a line and dispatch it for parsing.
 
