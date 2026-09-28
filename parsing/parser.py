@@ -1,6 +1,7 @@
-"""Define the ParseError exception used by the MapParser used to read map file."""
+"""Define the ParseError exception used by the
+MapParser used to read map file."""
 
-from zone import Zone
+from zone import Zone, ZoneType
 from connection import Connection
 
 
@@ -53,7 +54,24 @@ class MapParser:
         self.nb_drones = nb
 
     def _parse_connection(self, rest: str, line_number: int) -> None:
+        """Parse a 'connection:' line and register a new Connection.
+
+        Splits off an optional metadata block, extracts the two zone
+        names, validates that both zones are already known, checks for
+        duplicate connections (in either direction), and creates the
+        resulting Connection.
+
+        Args:
+            rest: Everything after 'connection:' on the line, already
+                stripped of surrounding whirtetspace.
+            line_number: The line number, used for error reporting.
+
+        Raises:
+            ParseError: If the metadata block is malformed, if the line
+                does not name exactly two zones, if either zone is
+                unknown, or if this connection was already defined."""
         parts = rest.split("[", 1)
+        max_link_capacity = 1
         if len(parts) == 1:
             connection_part = parts[0].strip()
             metadata_part = None
@@ -61,8 +79,32 @@ class MapParser:
             connection_part = parts[0].strip()
             metadata_raw = parts[1].strip()
             if not metadata_raw.endswith("]"):
-                raise ParseError(line_number, "metadata block not closed with ']'")
+                raise ParseError(
+                    line_number, "metadata block not closed with ']'"
+                )
             metadata_part = metadata_raw[:-1]
+
+        if metadata_part is not None:
+            metadata = self._parse_metadata(metadata_part, line_number)
+            for meta_key in metadata:
+                if meta_key != "max_link_capacity":
+                    raise ParseError(
+                        line_number,
+                        f"unknwon connection metadata '{meta_key}'")
+
+            if "max_link_capacity" in metadata:
+                raw = metadata["max_link_capacity"]
+                try:
+                    max_link_capacity = int(raw)
+                except ValueError:
+                    raise ParseError(
+                        line_number, f"invalid max_link_capacity '{raw}'"
+                    )
+                if max_link_capacity <= 0:
+                    raise ParseError(
+                        line_number, f"invalid max_link_capacity '{raw}'"
+                    )
+
         connection_zones = connection_part.split("-")
         if len(connection_zones) != 2:
             raise ParseError(line_number,
@@ -75,13 +117,114 @@ class MapParser:
         if zone_b not in self.zones:
             raise ParseError(line_number,
                              f"connection references unknown zone '{zone_b}")
-        key = tuple(sorted([zone_a, zone_b]))
+        key = (min(zone_a, zone_b), max(zone_a, zone_b))
         if key in self.seen_connections:
             raise ParseError(line_number,
                              f"duplicate connection {zone_a}-{zone_b}")
         self.seen_connections.add(key)
         connection = Connection(zone_a, zone_b, max_link_capacity)
-        self.connections.append(self.connection)
+        self.connections.append(connection)
+
+    def _parse_zone(
+            self,
+            rest: str,
+            line_number: int,
+            is_start: bool,
+            is_end: bool,
+    ) -> None:
+        """Parse a 'hub:', 'start_hub:' or 'end_hub:' line.
+
+        Splits off an optional metadata block, reads the name and the
+        integer coordinates, applies the metadata (zone type, color and
+        max_drones) and registers the new Zone.
+
+        Args:
+            rest: Everything after the line type, already stripped.
+            line_number: The line number, used for error reporting.
+            is_start: True if the line is a 'start_hub:'.
+            is_end: True if the line is an 'end_hub:'.
+
+        Raises:
+            ParseError: If the metadata block is malformed, the line
+                does not have a name and two integer coordinates, the
+                name is invalid or duplicated, a metadata value is
+                invalid, or a second start/end zone is defined.
+        """
+        parts = rest.split("[", 1)
+        zone_part = parts[0].strip()
+        metadata: dict[str, str] = {}
+        if len(parts) == 2:
+            metadata_raw = parts[1].strip()
+            if not metadata_raw.endswith("]"):
+                raise ParseError(
+                    line_number, "metadata block not closed with ']'"
+                )
+            metadata = self._parse_metadata(metadata_raw[:-1], line_number)
+
+        fields = zone_part.split()
+        if len(fields) != 3:
+            raise ParseError(
+                    line_number, "zone must be '<name> <x> <y>'"
+            )
+        name = fields[0]
+        if "-" in name:
+            raise ParseError(
+                line_number, f"zone name '{name}' cannot contain '-'"
+            )
+        if name in self.zones:
+            raise ParseError(line_number, f"duplicate zone '{name}'")
+        try:
+            x = int(fields[1])
+            y = int(fields[2])
+        except ValueError:
+            raise ParseError(
+                line_number,
+                f"invalid coordinates '{fields[1]} {fields[2]}'"
+            )
+
+        zone_type = ZoneType.NORMAL
+        color: str | None = None
+        max_drones = 1
+        for key, value in metadata.items():
+            if key == "zone":
+                try:
+                    zone_type = ZoneType.from_str(value)
+                except ValueError:
+                    raise ParseError(
+                        line_number, f"invalid zone type '{value}'"
+                    )
+            elif key == "color":
+                color = value
+            elif key == "max_drones":
+                if is_start or is_end:
+                    continue
+                try:
+                    max_drones = int(value)
+                except ValueError:
+                    raise ParseError(
+                        line_number, f"invalid max_drones '{value}'"
+                    )
+                if max_drones <= 0:
+                    raise ParseError(
+                        line_number, f"invalid max_drones '{value}'"
+                    )
+            else:
+                raise ParseError(
+                    line_number, f"unknown zone metadata '{key}'"
+                )
+
+            zone = Zone(
+                name, x, y, zone_type, color, max_drones, is_start, is_end
+            )
+            if is_start:
+                if self.start_zone is not None:
+                    raise ParseError(line_number, "duplicate start_hub")
+                self.start_zone = zone
+            if is_end:
+                if self.end_zone is not None:
+                    raise ParseError(line_number, "duplicate end_hub")
+                self.end_zone = zone
+            self.zones[name] = zone
 
     def _parse_metadata(
             self, metadata_part: str, line_number: int) -> dict[str, str]:
