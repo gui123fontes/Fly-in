@@ -63,7 +63,7 @@ class MapParser:
 
         Args:
             rest: Everything after 'connection:' on the line, already
-                stripped of surrounding whirtetspace.
+                stripped of surrounding whitespace.
             line_number: The line number, used for error reporting.
 
         Raises:
@@ -90,7 +90,7 @@ class MapParser:
                 if meta_key != "max_link_capacity":
                     raise ParseError(
                         line_number,
-                        f"unknwon connection metadata '{meta_key}'")
+                        f"unknown connection metadata '{meta_key}'")
 
             if "max_link_capacity" in metadata:
                 raw = metadata["max_link_capacity"]
@@ -113,10 +113,10 @@ class MapParser:
         zone_b = connection_zones[1].strip()
         if zone_a not in self.zones:
             raise ParseError(line_number,
-                             f"connection reference unknown zone '{zone_a}")
+                             f"connection reference unknown zone '{zone_a}'")
         if zone_b not in self.zones:
             raise ParseError(line_number,
-                             f"connection references unknown zone '{zone_b}")
+                             f"connection references unknown zone '{zone_b}'")
         key = (min(zone_a, zone_b), max(zone_a, zone_b))
         if key in self.seen_connections:
             raise ParseError(line_number,
@@ -213,24 +213,24 @@ class MapParser:
                     line_number, f"unknown zone metadata '{key}'"
                 )
 
-            zone = Zone(
-                name, x, y, zone_type, color, max_drones, is_start, is_end
-            )
-            if is_start:
-                if self.start_zone is not None:
-                    raise ParseError(line_number, "duplicate start_hub")
-                self.start_zone = zone
-            if is_end:
-                if self.end_zone is not None:
-                    raise ParseError(line_number, "duplicate end_hub")
-                self.end_zone = zone
-            self.zones[name] = zone
+        zone = Zone(
+            name, x, y, zone_type, color, max_drones, is_start, is_end
+        )
+        if is_start:
+            if self.start_zone is not None:
+                raise ParseError(line_number, "duplicate start_hub")
+            self.start_zone = zone
+        if is_end:
+            if self.end_zone is not None:
+                raise ParseError(line_number, "duplicate end_hub")
+            self.end_zone = zone
+        self.zones[name] = zone
 
     def _parse_metadata(
             self, metadata_part: str, line_number: int) -> dict[str, str]:
-        """Parse a netadata block into a dictionary of key-value pairs.
+        """Parse a metadata block into a dictionary of key-value pairs.
         Splits the content of a '[...]' block (without the brackets) on
-        whitespace to get individual 'key=value' tokens, theb splits each
+        whitespace to get individual 'key=value' tokens, the splits each
         token on '=' to build the resulting dictionary.
         Args:
             metadata_part: The raw text between the square brackets,
@@ -280,6 +280,12 @@ class MapParser:
         if line_type not in {"nb_drones", "start_hub", "end_hub", "hub",
                              "connection"}:
             raise ParseError(line_number, f"unknown line type '{line_type}'")
+        if self.nb_drones == 0 and line_type != "nb_drones":
+            raise ParseError(
+                line_number, "first line must define 'nb_drones'"
+            )
+        if self.nb_drones != 0 and line_type == "nb_drones":
+            raise ParseError(line_number, "duplicate 'nb_drones'")
         if line_type == "nb_drones":
             self._parse_nb_drones(rest, line_number)
         elif line_type == "start_hub":
@@ -291,6 +297,23 @@ class MapParser:
         elif line_type == "connection":
             self._parse_connection(rest, line_number)
 
+    def _validate_final_state(self, last_line: int) -> None:
+        """Check the rules that can only be verified after reading the file.
+
+        Args:
+            last_line: Number of the last line read, used for error
+                reporting since these errors have no line of there own.
+
+        Raises:
+            ParseError: If nb_drones, start_hub or end_hub is missing.
+        """
+        if self.nb_drones == 0:
+            raise ParseError(last_line, "missing 'nb_drones' definition")
+        if self.start_zone is None:
+            raise ParseError(last_line, "missing 'start_hub' zone")
+        if self.end_zone is None:
+            raise ParseError(last_line, "missing 'end_hub' zone")
+
     def parse(self, filepath: str) -> None:
         """Read and parse the map file at the given path.
         Args:
@@ -298,10 +321,11 @@ class MapParser:
 
         Raises:
             ParseError: if any line in the file is invalid"""
+        line_number = 0
         with open(filepath) as f:
             for line_number, raw_line in enumerate(f, start=1):
                 line = raw_line.split("#")[0].strip()
                 if not line:
                     continue
                 self._parse_line(line, line_number)
-        self._validate_final_state()
+        self._validate_final_state(line_number)
